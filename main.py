@@ -3,24 +3,29 @@ import plotly.express as px
 import dash_bootstrap_components as dbc
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+from numba import njit
 
 import pandas as pd
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
-df_prep = pd.read_csv('tblGegevens.csv', sep=';')
 
-df_prep = df_prep.drop(df_prep.columns[-5:], axis=1)
-df_prep = df_prep.replace(';', ',', regex=True)
-df_prep = df_prep.replace(',', '.', regex=True)
-df_prep = df_prep.dropna(subset=['Radars'])
-# drop time from date
-df_prep['Date'] = df_prep['Date'].str.split(' ').str[0]
-# convert date to datetime
-df_prep['Date'] = pd.to_datetime(df_prep['Date'], format='%d/%m/%Y')
+def df_prepare(val):
+    df_prep = pd.read_csv(val, sep=';')
+    df_prep = df_prep.drop(df_prep.columns[-5:], axis=1)
+    df_prep = df_prep.replace(';', ',', regex=True)
+    df_prep = df_prep.replace(',', '.', regex=True)
+    # drop time from date
+    df_prep['Date'] = df_prep['Date'].str.split(' ').str[0]
+    # convert date to datetime
+    df_prep['Date'] = pd.to_datetime(df_prep['Date'], format='%d/%m/%Y')
 
-# drop all rows older than five years
-df_prep = df_prep[df_prep['Date'] > datetime.now() - relativedelta(years=5)]
+    # drop all rows older than five years
+    df_prep = df_prep[df_prep['Date'] > datetime.now() - relativedelta(years=5)]
+    return df_prep
+
+
+df_res = df_prepare('tblGegevens.csv').dropna(subset=['Radars'])
 
 app.layout = html.Div([
     html.Div([
@@ -28,7 +33,8 @@ app.layout = html.Div([
         html.Div([
             dbc.Select(
                 id='radar-name',
-                options=[{'label': name, 'value': name} for name in df_prep['Radars'].unique()],
+                options=[{'label': name, 'value': name} for name in
+                         df_res['Radars'].unique()],
                 value='S723E'
             )
 
@@ -45,7 +51,7 @@ app.layout = html.Div([
 @app.callback(
     Output('indicator-graphic', 'figure'),
     Input('radar-name', 'value'))
-def update_graph(radar_name, df=df_prep):
+def update_graph(radar_name, df=df_res):
     df = df[df['Radars'] == radar_name]
 
     df = df.drop(df.columns[0], axis=1)
