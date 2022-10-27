@@ -1,18 +1,24 @@
 from dash import Dash, dcc, html, Input, Output
 import plotly.express as px
 import dash_bootstrap_components as dbc
+from dash_bootstrap_templates import load_figure_template
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from numba import njit
-
 import pandas as pd
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# stylesheet with the .dbc class
+dbc_css = "https://cdn.jsdelivr.net/gh/AnnMarieW/dash-bootstrap-templates/dbc.min.css"
+
+load_figure_template("flatly")
+
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc_css])
 
 
-def df_prepare(val):
+def df_prepare(val, colms):
     df_prep = pd.read_csv(val, sep=';')
-    df_prep = df_prep.drop(df_prep.columns[-5:], axis=1)
+    df_prep = df_prep.drop(df_prep.columns[-1:], axis=1)
     df_prep = df_prep.replace(';', ',', regex=True)
     df_prep = df_prep.replace(',', '.', regex=True)
     # drop time from date
@@ -25,33 +31,33 @@ def df_prepare(val):
     return df_prep
 
 
-df_res = df_prepare('tblGegevens.csv').dropna(subset=['Radars'])
+df_res = df_prepare('tblGegevens.csv', ['pdssr', 'pdpsr', 'pda', 'pdc', 'Date']).dropna(subset=['Radars'])
 
-app.layout = html.Div([
+app.layout = dbc.Container([
+
+    html.H1('Radar stats', className='text-center'),
     html.Div([
-
         html.Div([
-            dbc.Select(
-                id='radar-name',
-                options=[{'label': name, 'value': name} for name in
-                         df_res['Radars'].unique()],
-                value='S723E'
-            )
 
-        ], style={'width': '10em', "display": 'inline-block', 'margin-right': 'auto',
-                  'margin-left': '1em'}),
-        dcc.Graph(id='indicator-graphic',
-                  style={'backgroundColor': '#111111', 'height': '80vh', 'padding': '1em',
-                         'border': '1px solid #222222', 'border-radius': '5px', 'margin': '1em'}),
-    ], style={'backgroundColor': '#111111', 'height': '80vh', 'padding': '1em'}),
+            dcc.Dropdown(
+                df_res['Radars'].unique(),
+                'S723E',
+                id='radar-name'
+            ),
 
-], style={'padding': '5em', 'height': '100vh', 'backgroundColor': '#111111'})
+        ]),
+        dcc.Graph(id='indicator-graphic'),
+        dcc.Graph(id='indicator-graphic2'),
+        dcc.Graph(id='indicator-graphic3')
+    ]),
+
+],
+    className='dbc',
+)
 
 
-@app.callback(
-    Output('indicator-graphic', 'figure'),
-    Input('radar-name', 'value'))
-def update_graph(radar_name, df=df_res):
+def make_graph(radar_name, type, colms):
+    df = df_prepare('tblGegevens.csv', colms)
     df = df[df['Radars'] == radar_name]
 
     df = df.drop(df.columns[0], axis=1)
@@ -64,24 +70,28 @@ def update_graph(radar_name, df=df_res):
     df = df[df['Date'] < datetime.now().strftime('%Y-%m-%d')]
 
     # move . one place to the left if value is above 100
-    for i in range(1, len(df.columns)):
-        df[df.columns[i]] = df[df.columns[i]].apply(lambda x: x / 10 if x > 100 else x)
+    # for i in range(1, len(df.columns)):
+    #    df[df.columns[i]] = df[df.columns[i]].apply(lambda x: x / 10 if x > 100 else x)
 
     # add percentage to value
-    for i in range(1, len(df.columns)):
-        df[df.columns[i]] = df[df.columns[i]].apply(lambda x: x / 100)
+
+    if type != 'Biases':
+        for i in range(1, len(df.columns)):
+            df[df.columns[i]] = df[df.columns[i]].apply(lambda x: x / 100)
+
+    # only keep the columns in colms
+    df = df[colms]
+
+
 
     fig = px.line(df, x="Date", y=df.columns,
-                  title=radar_name, markers=False, line_shape='linear', render_mode="webg1")
-    fig.update_xaxes(
-
-    )
+                  title=radar_name + ' ' + type, markers=False, line_shape='linear', render_mode="webg1")
 
     fig.update_layout(
         legend_title="Stats",
         hovermode="x unified",
-        yaxis_tickformat=',.2%',
-        template='plotly_dark',
+        yaxis_tickformat=',.2%' if type != 'Biases' else '',
+        template='flatly',
         xaxis=dict(
             tickformat="%b\n%Y", rangeslider_visible=True, rangeselector=dict(
                 buttons=list([
@@ -90,7 +100,7 @@ def update_graph(radar_name, df=df_res):
                     dict(count=1, label="YTD", step="year", stepmode="todate"),
                     dict(count=1, label="1y", step="year", stepmode="backward"),
                     dict(step="all")
-                ]), bgcolor='#515151', bordercolor='#515151', borderwidth=1, font=dict(color='white')
+                ])
             ), tickformatstops=[
                 dict(dtickrange=[None, 1000], value="%H:%M:%S.%L ms"),
                 dict(dtickrange=[1000, 60000], value="%H:%M:%S s"),
@@ -100,13 +110,25 @@ def update_graph(radar_name, df=df_res):
                 dict(dtickrange=[604800000, "M1"], value="%e %b"),
                 dict(dtickrange=["M1", "M12"], value="%b '%y"),
                 dict(dtickrange=["M12", None], value="%Y")
-            ], minor=dict(ticks="inside", showgrid=True)
+            ], minor=dict(ticks="inside", showgrid=True),
+            autorange=True
         )
     )
 
-    fig.write_html('report.html', auto_open=False)
-
     return fig
+
+
+@app.callback(
+    [Output('indicator-graphic', 'figure'),
+     Output('indicator-graphic2', 'figure'),
+     Output('indicator-graphic3', 'figure')],
+    Input('radar-name', 'value'))
+def update_graph(radar_name, df=df_res):
+    fig = make_graph(radar_name, 'Probability', ['pdssr', 'pdpsr', 'pda', 'pdc', 'Date'])
+    fig2 = make_graph(radar_name, 'Errors', ['iva', 'ivc', 'fc', 'ft', 'mt', 'Date'])
+    fig3 = make_graph(radar_name, 'Biases', ['rng', 'azim', 'Date'])
+
+    return fig, fig2, fig3
 
 
 if __name__ == '__main__':
