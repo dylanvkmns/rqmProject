@@ -1,5 +1,4 @@
 from dash import Dash, dcc, html, Input, Output
-import plotly.express as px
 import dash_bootstrap_components as dbc
 from dash_bootstrap_templates import load_figure_template
 from datetime import datetime
@@ -11,12 +10,16 @@ import plotly.graph_objects as go
 # stylesheet with the .dbc class
 dbc_css = "https://cdn.jsdelivr.net/gh/AnnMarieW/dash-bootstrap-templates/dbc.min.css"
 
+list_probabilities = ['pdssr', 'pdpsr', 'pda', 'pdc']
+list_errors = ['iva', 'ivc', 'fc', 'ft', 'mt']
+list_biases = ['rng', 'azim']
+
 load_figure_template("flatly")
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc_css])
 
 
-def df_prepare(val, colms):
+def df_prepare(val):
     df_prep = pd.read_csv(val, sep=';')
     df_prep = df_prep.drop(df_prep.columns[-1:], axis=1)
     df_prep = df_prep.replace(';', ',', regex=True)
@@ -28,10 +31,11 @@ def df_prepare(val, colms):
 
     # drop all rows older than five years
     df_prep = df_prep[df_prep['Date'] > datetime.now() - relativedelta(years=5)]
+
     return df_prep
 
 
-df_res = df_prepare('tblGegevens.csv', ['pdssr', 'pdpsr', 'pda', 'pdc', 'Date']).dropna(subset=['Radars'])
+df_res = df_prepare('tblGegevens.csv')
 
 app.layout = dbc.Container([
 
@@ -46,9 +50,31 @@ app.layout = dbc.Container([
             ),
 
         ]),
-        dcc.Graph(id='indicator-graphic'),
-        dcc.Graph(id='indicator-graphic2'),
-        dcc.Graph(id='indicator-graphic3')
+
+        html.Div([
+            dcc.DatePickerRange(
+                id='my-date-picker-range',
+                min_date_allowed=df_res['Date'].min(),
+                max_date_allowed=df_res['Date'].max(),
+                initial_visible_month=df_res['Date'].max(),
+                start_date=df_res['Date'].min(),
+                end_date=df_res['Date'].max(),
+                display_format='DD/MM/YYYY',
+                className='dbc',
+            ),
+            # add two radio buttons to select the type of graph
+            dcc.RadioItems(
+                options=[
+                    {'label': 'Stats over radar', 'value': 'sor'},
+                    {'label': 'Radars over stat', 'value': 'ros'},
+                ],
+                value='line',
+                id='graph-type',
+                labelStyle={'display': 'inline-block'}
+            ),
+        ], id='output-container-date-picker-range'),
+
+        dcc.Graph(id='indicator-graphic', style={'height': '80vh'}),
     ]),
 
 ],
@@ -56,10 +82,10 @@ app.layout = dbc.Container([
 )
 
 
-def make_graph(radar_name, type, colms):
-    df = df_prepare('tblGegevens.csv', colms)
+def make_graph(radar_name, start_date, end_date):
+    df = df_prepare('tblGegevens.csv')
     df = df[df['Radars'] == radar_name]
-
+    df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
     df = df.drop(df.columns[0], axis=1)
 
     for i in range(1, len(df.columns)):
@@ -69,39 +95,26 @@ def make_graph(radar_name, type, colms):
     df = df.sort_values(by=['Date'])
     df = df[df['Date'] < datetime.now().strftime('%Y-%m-%d')]
 
-    # move . one place to the left if value is above 100
-    # for i in range(1, len(df.columns)):
-    #    df[df.columns[i]] = df[df.columns[i]].apply(lambda x: x / 10 if x > 100 else x)
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.3, 0.3, 0.3])
 
-    # add percentage to value
-
-    if type != 'Biases':
-        for i in range(1, len(df.columns)):
-            df[df.columns[i]] = df[df.columns[i]].apply(lambda x: x / 100)
-
-    # only keep the columns in colms
-    df = df[colms]
-
-
-
-    fig = px.line(df, x="Date", y=df.columns,
-                  title=radar_name + ' ' + type, markers=False, line_shape='linear', render_mode="webg1")
+    # add traces for list_probabilities
+    for i in range(0, len(list_probabilities)):
+        fig.add_trace(go.Scatter(x=df['Date'], y=df[list_probabilities[i]], name=list_probabilities[i], ), 1, 1)
+    # add traces for list_errors
+    for i in range(0, len(list_errors)):
+        fig.add_trace(go.Scatter(x=df['Date'], y=df[list_errors[i]], name=list_errors[i]), 2, 1)
+    # add traces for list_biases
+    for i in range(0, len(list_biases)):
+        fig.add_trace(go.Scatter(x=df['Date'], y=df[list_biases[i]], name=list_biases[i]), 3, 1)
 
     fig.update_layout(
+        # add a button to show last month
         legend_title="Stats",
+        # title_text="Radar stats",
         hovermode="x unified",
-        yaxis_tickformat=',.2%' if type != 'Biases' else '',
-        template='flatly',
+        template="flatly",
         xaxis=dict(
-            tickformat="%b\n%Y", rangeslider_visible=True, rangeselector=dict(
-                buttons=list([
-                    dict(count=1, label="1m", step="month", stepmode="backward"),
-                    dict(count=6, label="6m", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1y", step="year", stepmode="backward"),
-                    dict(step="all")
-                ])
-            ), tickformatstops=[
+            tickformatstops=[
                 dict(dtickrange=[None, 1000], value="%H:%M:%S.%L ms"),
                 dict(dtickrange=[1000, 60000], value="%H:%M:%S s"),
                 dict(dtickrange=[60000, 3600000], value="%H:%M m"),
@@ -112,23 +125,24 @@ def make_graph(radar_name, type, colms):
                 dict(dtickrange=["M12", None], value="%Y")
             ], minor=dict(ticks="inside", showgrid=True),
             autorange=True
-        )
+        ),  # end xaxis  definition
+
+        xaxis3_rangeslider_visible=True,
+        xaxis3_type="date"
     )
 
     return fig
 
 
 @app.callback(
-    [Output('indicator-graphic', 'figure'),
-     Output('indicator-graphic2', 'figure'),
-     Output('indicator-graphic3', 'figure')],
-    Input('radar-name', 'value'))
-def update_graph(radar_name, df=df_res):
-    fig = make_graph(radar_name, 'Probability', ['pdssr', 'pdpsr', 'pda', 'pdc', 'Date'])
-    fig2 = make_graph(radar_name, 'Errors', ['iva', 'ivc', 'fc', 'ft', 'mt', 'Date'])
-    fig3 = make_graph(radar_name, 'Biases', ['rng', 'azim', 'Date'])
-
-    return fig, fig2, fig3
+    Output('indicator-graphic', 'figure'),
+    Input('radar-name', 'value'),
+    Input('my-date-picker-range', 'start_date'),
+    Input('my-date-picker-range', 'end_date')
+)
+def update_graph(radar_name, start_date, end_date):
+    fig = make_graph(radar_name, start_date, end_date)
+    return fig
 
 
 if __name__ == '__main__':
