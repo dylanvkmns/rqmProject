@@ -6,36 +6,27 @@ from dateutil.relativedelta import relativedelta
 import pandas as pd
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import sqlite3
 
 # stylesheet with the .dbc class
 dbc_css = "https://cdn.jsdelivr.net/gh/AnnMarieW/dash-bootstrap-templates/dbc.min.css"
 
-list_probabilities = ['pdssr', 'pdpsr', 'pda', 'pdc']
-list_errors = ['iva', 'ivc', 'fc', 'ft', 'mt']
-list_biases = ['rng', 'azim']
+list_probabilities = ['PD_P', 'PD_S', 'PD_M', 'PD_PS', 'PD_PM']
+#list_errors = ['iva', 'ivc', 'fc', 'ft', 'mt']
+#list_biases = ['rng', 'azim']
 
 load_figure_template("flatly")
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc_css])
 
+#get df from database
+def df_get(file):
+    conn = sqlite3.connect(file)
+    df = pd.read_sql_query("SELECT * FROM tblGegevens", conn)
+    #df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+    return df
 
-def df_prepare(val):
-    df_prep = pd.read_csv(val, sep=';')
-    df_prep = df_prep.drop(df_prep.columns[-1:], axis=1)
-    df_prep = df_prep.replace(';', ',', regex=True)
-    df_prep = df_prep.replace(',', '.', regex=True)
-    # drop time from date
-    df_prep['Date'] = df_prep['Date'].str.split(' ').str[0]
-    # convert date to datetime
-    df_prep['Date'] = pd.to_datetime(df_prep['Date'], format='%d/%m/%Y')
-
-    # drop all rows older than five years
-    df_prep = df_prep[df_prep['Date'] > datetime.now() - relativedelta(years=5)]
-
-    return df_prep
-
-
-df_res = df_prepare('tblGegevens.csv')
+df_res = df_get('rdmData.db')
 
 app.layout = dbc.Container([
 
@@ -44,7 +35,7 @@ app.layout = dbc.Container([
         html.Div([
 
             dcc.Dropdown(
-                df_res['Radars'].unique(),
+                df_res['Radar Name'].unique(),
                 'S723E',
                 id='radar-name'
             ),
@@ -81,19 +72,17 @@ app.layout = dbc.Container([
     className='dbc',
 )
 
-
 def make_graph(radar_name, start_date, end_date):
-    df = df_prepare('tblGegevens.csv')
-    df = df[df['Radars'] == radar_name]
-    df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
-    df = df.drop(df.columns[0], axis=1)
+    df = df_res
 
-    for i in range(1, len(df.columns)):
-        df[df.columns[i]] = df[df.columns[i]].astype(float)
-
+    df = df[df['Radar Name'] == radar_name]
     # sort by date
     df = df.sort_values(by=['Date'])
     df = df[df['Date'] < datetime.now().strftime('%Y-%m-%d')]
+    df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
+
+    #for i in range(2, len(df.columns)):
+        #df[df.columns[i]] = df[df.columns[i]].astype(float)
 
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.3, 0.3, 0.3])
 
@@ -101,11 +90,11 @@ def make_graph(radar_name, start_date, end_date):
     for i in range(0, len(list_probabilities)):
         fig.add_trace(go.Scatter(x=df['Date'], y=df[list_probabilities[i]], name=list_probabilities[i], ), 1, 1)
     # add traces for list_errors
-    for i in range(0, len(list_errors)):
-        fig.add_trace(go.Scatter(x=df['Date'], y=df[list_errors[i]], name=list_errors[i]), 2, 1)
+    #for i in range(0, len(list_errors)):
+        #fig.add_trace(go.Scatter(x=df['Date'], y=df[list_errors[i]], name=list_errors[i]), 2, 1)
     # add traces for list_biases
-    for i in range(0, len(list_biases)):
-        fig.add_trace(go.Scatter(x=df['Date'], y=df[list_biases[i]], name=list_biases[i]), 3, 1)
+    #for i in range(0, len(list_biases)):
+        #fig.add_trace(go.Scatter(x=df['Date'], y=df[list_biases[i]], name=list_biases[i]), 3, 1)
 
     fig.update_layout(
         # add a button to show last month
